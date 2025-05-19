@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nearby Location Finder</title>
+  <link rel="stylesheet" href="final_style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/simple-slider-js@1.0.0/dist/slider.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+  <header>
+    <nav>
+      <ul class="nav">
+        <li><a href="#" onclick="loadPage('home')">Home</a></li>
+        <li><a href="#" onclick="loadPage('about')">About</a></li>
+        <li><a href="#" onclick="loadPage('locator')">Find Locations</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="content">
+    <!-- Content will be loaded dynamically -->
+  </main>
+
+  <footer>
+    <p>&copy; 2025 Nearby Finder</p>
+  </footer>
+
+  <script>
+    async function loadPage(page) {
+      let content = document.getElementById('content');
+      if (page === 'home') {
+        content.innerHTML = `
+          <section>
+            <h1>Welcome to Nearby Finder</h1>
+            <div id="slider">
+              <div>Discover Nearby Mental Health Resources</div>
+              <div>Powered by OpenStreetMap</div>
+              <div>Explore with Ease</div>
+            </div>
+          </section>
+        `;
+        new Slider('#slider');
+      } else if (page === 'about') {
+        content.innerHTML = `
+          <section>
+            <h2>About</h2>
+            <p>This application helps you find nearby mental health resources using OpenStreetMap APIs. It uses your current location to show relevant services.</p>
+          </section>
+        `;
+      } else if (page === 'locator') {
+        content.innerHTML = `
+          <section>
+            <h2>Find Mental Health Resources Near You</h2>
+            <button onclick="findLocations()">Find Near Me</button>
+            <div id="map" style="height: 400px; margin-top: 20px;"></div>
+
+            <h3>Add a New Resource</h3>
+            <form id="addResourceForm">
+              <input type="text" id="name" placeholder="Name" required />
+              <input type="number" step="any" id="latitude" placeholder="Latitude" required />
+              <input type="number" step="any" id="longitude" placeholder="Longitude" required />
+              <input type="text" id="type" placeholder="Type (optional)" />
+              <button type="submit">Add Resource</button>
+            </form>
+            <div id="addResult" style="margin-top:10px; color: green;"></div>
+          </section>
+        `;
+
+        document.getElementById('addResourceForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const name = document.getElementById('name').value.trim();
+          const latitude = parseFloat(document.getElementById('latitude').value);
+          const longitude = parseFloat(document.getElementById('longitude').value);
+          const type = document.getElementById('type').value.trim();
+
+          try {
+            const res = await fetch('http://localhost:3000/api/resources', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, latitude, longitude, type }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+              document.getElementById('addResult').style.color = 'green';
+              document.getElementById('addResult').textContent = `Resource "${data.name}" added successfully!`;
+              e.target.reset();
+            } else {
+              document.getElementById('addResult').style.color = 'red';
+              document.getElementById('addResult').textContent = `Error: ${data.error || 'Failed to add resource'}`;
+            }
+          } catch (err) {
+            document.getElementById('addResult').style.color = 'red';
+            document.getElementById('addResult').textContent = `Error: ${err.message}`;
+          }
+        });
+      }
+    }
+
+    async function findLocations() {
+      const mapContainer = document.getElementById('map');
+      mapContainer.innerHTML = '<p>Loading map data...</p>';
+
+      if (!navigator.geolocation) {
+        mapContainer.innerHTML = '<p>Geolocation is not supported by your browser.</p>';
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+
+        const map = L.map('map').setView([lat, lon], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+        }).addTo(map);
+
+        L.marker([lat, lon]).addTo(map).bindPopup("You are here").openPopup();
+
+        try {
+          const res = await fetch('http://localhost:3000/api/resources');
+          const resources = await res.json();
+
+          if (!resources.length) {
+            mapContainer.innerHTML = '<p>No mental health resources in the database.</p>';
+            return;
+          }
+
+          // Calculate distance for each resource
+          resources.forEach(r => {
+            r.distance = getDistanceFromLatLonInKm(lat, lon, r.latitude, r.longitude);
+          });
+
+          // Sort by distance ascending
+          resources.sort((a, b) => a.distance - b.distance);
+
+          // Display all resources (no radius limit)
+          resources.forEach(r => {
+            L.marker([r.latitude, r.longitude])
+              .addTo(map)
+              .bindPopup(`<strong>${r.name}</strong><br>Type: ${r.type || 'N/A'}<br>Distance: ${r.distance.toFixed(2)} km`);
+          });
+
+        } catch (error) {
+          mapContainer.innerHTML = `<p>Error fetching data: ${error.message}</p>`;
+        }
+      }, (error) => {
+        mapContainer.innerHTML = `<p>Error getting location: ${error.message}</p>`;
+      });
+    }
+
+    // Helper to calculate distance between two lat/lon points in km
+    function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Earth radius km
+      const dLat = deg2rad(lat2 - lat1);
+      const dLon = deg2rad(lon2 - lon1);
+      const a =
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+    function deg2rad(deg) {
+      return deg * (Math.PI/180);
+    }
+
+    // Load default page
+    loadPage('home');
+  </script>
+</body>
+</html>
